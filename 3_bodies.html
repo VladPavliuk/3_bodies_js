@@ -1,4 +1,10 @@
 <div style="position: fixed;">
+    <label for="simulation-speed">speed</label>
+    <input type="range" id="simulation-speed" min="1.5" max="100" value="30">
+    <br>
+    <label for="radius-detection-range">radius-detection-range</label>
+    <input type="range" id="radius-detection-range" min="1" max="100" value="30">
+
     <p>FPS: <span id="fps-counter">-</span></p>
     <p>Objects: <span id="objects-count">-</span></p>
     <p>Total Momentum: <span id="total-momentum">-</span></p>
@@ -9,41 +15,39 @@
     let currentFrameTime = Date.now();
     let fpsAccum = 0;
     let totalFps = 0;
-    let worldSpeed = 10;
-    let test1 = 0;
 
     const objectsCount = document.getElementById('objects-count');
     const totalMomentum = document.getElementById('total-momentum');
     const fpsCounter = document.getElementById('fps-counter');
+    const radiusDetectionRangeElement = document.getElementById('radius-detection-range');
+    const simulationSpeedElement = document.getElementById('simulation-speed');
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
-    canvas.width = 1500;
-    canvas.height = 700;
-    /*
-    const spaceObjects = [
-        { position: { x: 700, y: 350 }, moment: { x: 16, y: 0 }, mass: 1024 }, // neptune
-      { position: { x: 700, y: 100 }, moment: { x: 12, y: 0 }, mass: 868 }, // uranus
-      { position: { x: 200, y: 300 }, moment: { x: 3, y: 0 }, mass: 5683 }, // saturn
-      { position: { x: 800, y: 400 }, moment: { x: 2, y: 0 }, mass: 18981 }, // jupiter
-      { position: { x: 200, y: 500 }, moment: { x: 0, y: 2 }, mass: 6 }, // mars
-      { position: { x: 900, y: 600 }, moment: { x: 0, y: 2 }, mass: 59 }, // arth
-      { position: { x: 100, y: 700 }, moment: { x: 7, y: 0 }, mass: 48 }, // venus
-      { position: { x: 720, y: 300 }, moment: { x: 24, y: 0 }, mass: 3 }, // mercury
-      { position: { x: 740, y: 350 }, moment: { x: 0, y: 0 }, mass: 19891000 }, // the sun
-    ];*/
+    canvas.width = 1750;
+    canvas.height = 750;
+    let radiusDetectionRange = Number(radiusDetectionRangeElement.value);
+    let simulationSpeed = Number(simulationSpeedElement.value);
 
+    // const spaceObjects = [
+    //     {position: {x: 700, y: 350}, moment: {x: 0, y: 0}, mass: 1024}, // neptune
+    //     {position: {x: 700, y: 300}, moment: {x: 0, y: 0}, mass: 868}, // uranus
+    // ].map(object => ({
+    //     ...object,
+    //     prevPosition: object.position,
+    //     color: {g: Math.floor(Math.random() * 200), b: Math.floor(Math.random() * 200)}
+    // }));
 
     let spaceObjects = [];
 
-    const distanceBetween = 15;
-    for (let i = distanceBetween; i < canvas.width; i += distanceBetween) {
-        for (let j = distanceBetween; j < canvas.height; j += distanceBetween) {
+    const distanceBetween = 30;
+    for (let i = distanceBetween; i < canvas.width - 1; i += distanceBetween) {
+        for (let j = distanceBetween; j < canvas.height - 1; j += distanceBetween) {
             spaceObjects.push({
                 prevPosition: {x: i, y: j},
                 position: {x: i, y: j},
                 moment: {x: 0, y: 0},
                 mass: Math.random() * 2000000,
-                //mass: 10000,
+                // mass: 10000,
                 color: {g: Math.floor(Math.random() * 200), b: Math.floor(Math.random() * 200)}
             });
         }
@@ -54,15 +58,15 @@
         for (let i = 0; i < spaceObjects.length; i++) {
             const x = spaceObjects[i].position.x;
             const y = spaceObjects[i].position.y;
-            const size = 6;
+            const size = 3;
 
             const color = Math.min(255, Math.sqrt(spaceObjects[i].moment.x ** 2 + spaceObjects[i].moment.y ** 2) / 20 * 255);
             //requestAnimationFrame(() => {
             ctx.strokeStyle = ctx.fillStyle = 'rgb(' + color + ', ' + spaceObjects[i].color.g + ', ' + spaceObjects[i].color.b + ')';
 
-            ctx.lineWidth = 6;
+            ctx.lineWidth = size;
             ctx.beginPath();
-            ctx.moveTo(spaceObjects[i].prevPosition.x - size / 2, spaceObjects[i].prevPosition.y - size / 2);
+            // ctx.moveTo(spaceObjects[i].prevPosition.x - size / 2, spaceObjects[i].prevPosition.y - size / 2);
             ctx.lineTo(x - size / 2, y - size / 2);
             ctx.stroke();
 
@@ -76,59 +80,116 @@
 
     const updateSpaceObjectsPosition = () => {
         const debugNow = Date.now();
+        const speed = 3 - (3 / Math.sqrt(simulationSpeed));
+
         for (let i = 0; i < spaceObjects.length; i++) {
             spaceObjects[i].prevPosition.x = spaceObjects[i].position.x;
             spaceObjects[i].prevPosition.y = spaceObjects[i].position.y;
-            spaceObjects[i].position.x += spaceObjects[i].moment.x;
-            spaceObjects[i].position.y += spaceObjects[i].moment.y;
+            spaceObjects[i].position.x += speed * spaceObjects[i].moment.x;
+            spaceObjects[i].position.y += speed * spaceObjects[i].moment.y;
         }
         console.log('updateSpaceObjectsPosition: ' + (Date.now() - debugNow) + 'ms');
     };
 
     const updateSpaceObjectsMoment = () => {
         const debugNow = Date.now();
+        const spaceObjectsAmount = spaceObjects.length;
+        const radiusDetectionRangeRate = 0.3 + 8 - 8 / radiusDetectionRange;
 
-        for (let i = 0; i < spaceObjects.length; i++) {
+        // let isCollided = false;
+        // let collidedParams = {dx: 0, dy: 0};
+        for (let i = 0; i < spaceObjectsAmount; i++) {
             const rootObject = spaceObjects[i];
 
             let resultVector = {x: 0, y: 0};
 
-            for (let j = 0; j < spaceObjects.length; j++) {
+            for (let j = 0; j < spaceObjectsAmount; j++) {
                 if (i === j) continue;
                 const dy = rootObject.position.y - spaceObjects[j].position.y;
                 const dx = rootObject.position.x - spaceObjects[j].position.x;
 
                 const distance = Math.sqrt(dy * dy + dx * dx);
-                let F = rootObject.mass * spaceObjects[j].mass / (distance * distance); // 1 newton law
-                if (F > 100000) F = 100000;
 
-                let a = F / rootObject.mass; // 2 newton law
-                a *= 0.1;
+                let a, x, y;
+                if (distance <= 2) {
 
-                const x = (dx === 0 || !isFinite(dx)) ? 0 : dx / Math.max(Math.abs(dy), Math.abs(dx));
-                const y = (dy === 0 || !isFinite(dy)) ? 0 : dy / Math.max(Math.abs(dy), Math.abs(dx));
+                    break;
+                }
+                // if (distance <= radiusDetectionRangeRate) {
+                //     resultVector.x += 0;
+                //     resultVector.y += 0;
+                //     break;
+                // }
+                // spaceObjects.push({
+                //     ...rootObject,
+                //     moment: {
+                //         x: rootObject.mass > spaceObjects[j].mass ? rootObject.moment.x : spaceObjects[j].moment.x,
+                //         y: rootObject.mass > spaceObjects[j].mass ? rootObject.moment.y : spaceObjects[j].moment.y
+                //     },
+                //     mass: rootObject.mass + spaceObjects[j].mass,
+                //     color: {g: Math.floor(Math.random() * 200), b: Math.floor(Math.random() * 200)}
+                // });
+                // spaceObjects = spaceObjects.filter((_, index) => index !== i && index !== j);
+                // spaceObjects.splice(i, 1);
+                // spaceObjects.splice(j, 1);
+                //isCollided = true;
+                //break;
+                // const test = Math.max(Math.abs(dy), Math.abs(dx));
+                // x = (dx === 0 || !isFinite(dx)) ? 0 : dx / test;
+                // y = (dy === 0 || !isFinite(dy)) ? 0 : dy / test;
+                //
+                // collidedParams.dx = x;
+                // collidedParams.dy = y;
+                //break;
+                // } else {
+                a = 0.1 * spaceObjects[j].mass / (distance * distance); // 1 and 2 newton's laws
+                if (a > 100) a = 100 / 2;
+
+                const test = Math.max(Math.abs(dy), Math.abs(dx));
+                x = (dx === 0 || !isFinite(dx)) ? 0 : dx / test;
+                y = (dy === 0 || !isFinite(dy)) ? 0 : dy / test;
+                // }
 
                 resultVector.x += -a * x;
                 resultVector.y += -a * y;
-
-                //rootObjectVectors.push({ y: -a * y, x: -a * x });
             }
-            //let resultVector = rootObjectVectors.reduce((acc, vector) => ({x: vector.x + acc.x, y: vector.y + acc.y}), { x: 0, y: 0 });
-            resultVector = {y: resultVector.y / spaceObjects.length, x: resultVector.x / spaceObjects.length};
+
+            // if (isCollided) {
+            //     continue;
+            // } else {
+            resultVector = {y: resultVector.y / spaceObjectsAmount, x: resultVector.x / spaceObjectsAmount};
 
             rootObject.moment.x += resultVector.x;
             rootObject.moment.y += resultVector.y;
+
+            rootObject.moment.x *= 0.999;
+            rootObject.moment.y *= 0.999;
+            // }
         }
 
         console.log('updateSpaceObjectsMoment: ' + (Date.now() - debugNow) + 'ms');
     };
 
     const clearObjects = () => {
+        const offsetBuffer = -10;
+
         for (let i = 0; i < spaceObjects.length; i++) {
-            if (spaceObjects[i].position.x < -1000 || spaceObjects[i].position.y < -1000
-                || spaceObjects[i].position.x > 3000 || spaceObjects[i].position.y > 3000) {
-                spaceObjects = spaceObjects.filter((_, index) => index !== i);
+            if (spaceObjects[i].position.x < -offsetBuffer) {
+                spaceObjects[i].moment.x = Math.abs(spaceObjects[i].moment.x) * 0.5;
+            } else if (spaceObjects[i].position.x > canvas.width + offsetBuffer) {
+                spaceObjects[i].moment.x = -Math.abs(spaceObjects[i].moment.x) * 0.5;
             }
+
+            if (spaceObjects[i].position.y < -offsetBuffer) {
+                spaceObjects[i].moment.y = Math.abs(spaceObjects[i].moment.y) * 0.5;
+            } else if (spaceObjects[i].position.y > canvas.height + offsetBuffer) {
+                spaceObjects[i].moment.y = -Math.abs(spaceObjects[i].moment.y) * 0.5;
+            }
+
+            // if (spaceObjects[i].position.x < -1000 || spaceObjects[i].position.y < -1000
+            //     || spaceObjects[i].position.x > 3000 || spaceObjects[i].position.y > 3000) {
+            //     spaceObjects[i].spaceObjects = spaceObjects.filter((_, index) => index !== i);
+            // }
         }
     };
 
@@ -152,20 +213,22 @@
             fpsAccum++;
         }
 
-        test1++;
-        if (test1 > worldSpeed) {
-            test1 = 0;
-            return;
-        }
-
         objectsCount.innerHTML = spaceObjects.length;
-        totalMomentum.innerHTML = spaceObjects.reduce((acc, object) => acc + Math.sqrt(object.moment.x ** 2 + object.moment.y ** 2), 0);
+        totalMomentum.innerHTML = parseInt(spaceObjects.reduce((acc, object) => acc + Math.sqrt(object.moment.x ** 2 + object.moment.y ** 2), 0));
         clearObjects();
         drawMap();
         updateSpaceObjectsMoment();
         updateSpaceObjectsPosition();
         drawSpaceObjects();
     }, 0);
+
+    radiusDetectionRangeElement.addEventListener('input', e => {
+        radiusDetectionRange = Number(e.target.value);
+    });
+
+    simulationSpeedElement.addEventListener('input', e => {
+        simulationSpeed = Number(e.target.value);
+    });
 
     document.addEventListener('keyup', e => {
         if (e.keyCode === 32) {
@@ -181,8 +244,8 @@
             prevPosition: {x: x, y: y},
             position: {x: x, y: y},
             moment: {x: 0, y: 0},
-            //mass: Math.random() * 2000000,
-            mass: 1000000000000,
+            mass: Math.random() * 2000000,
+            // mass: 1000000000000,
             color: {g: Math.floor(Math.random() * 200), b: Math.floor(Math.random() * 200)}
         });
         e.clientX
