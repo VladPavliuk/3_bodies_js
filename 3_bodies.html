@@ -1,30 +1,45 @@
-<div style="position: fixed;">
+<style>
+    body {
+        background: black;
+    }
+</style>
+<div style="position: fixed; background-color: grey; border: 1px grey solid;">
     <label for="simulation-speed">speed</label>
     <input type="range" id="simulation-speed" min="1.5" max="100" value="30">
     <br>
-    <label for="radius-detection-range">radius-detection-range</label>
-    <input type="range" id="radius-detection-range" min="1" max="100" value="30">
+    <label for="radius-detection-range">mass</label>
+    <input type="range" id="radius-detection-range" min="1" max="100000000" value="1">
 
     <p>FPS: <span id="fps-counter">-</span></p>
     <p>Objects: <span id="objects-count">-</span></p>
-    <p>Total Momentum: <span id="total-momentum">-</span></p>
+    <!--    <p>Total Momentum: <span id="total-momentum">-</span></p>-->
 </div>
 <canvas id="canvas"></canvas>
 <script>
+    // 0, 1, 2, 3
+
+    // centerOfMass
+    // totalMass
+    // isExternal
+    // index of object in the list
+
     let lastFrameTime = Date.now();
     let currentFrameTime = Date.now();
     let fpsAccum = 0;
     let totalFps = 0;
 
+    const gConst = 6.67430 * Math.pow(10, -11); //TODO: make it configurable
     const objectsCount = document.getElementById('objects-count');
-    const totalMomentum = document.getElementById('total-momentum');
+    // const totalMomentum = document.getElementById('total-momentum');
     const fpsCounter = document.getElementById('fps-counter');
     const radiusDetectionRangeElement = document.getElementById('radius-detection-range');
     const simulationSpeedElement = document.getElementById('simulation-speed');
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
-    canvas.width = 1750;
-    canvas.height = 750;
+    canvas.width = 1500;
+    canvas.height = 830;
+    // const objectsViewBuffer = new Uint8ClampedArray(4 * canvas.width * canvas.height);
+
     let radiusDetectionRange = Number(radiusDetectionRangeElement.value);
     let simulationSpeed = Number(simulationSpeedElement.value);
 
@@ -39,25 +54,164 @@
 
     let spaceObjects = [];
 
-    const distanceBetween = 30;
+    const getNewSpaceObject = (xPosition, yPosition, xMoment, yMoment) => {
+        return {
+            prevPosition: {x: xPosition, y: yPosition},
+            position: {x: xPosition, y: yPosition},
+            moment: {x: xMoment || 0, y: yMoment || 0},
+            mass: Math.random() * 100000,
+            // mass: (4 + (Math.random() * 5)) ** 5,
+            // mass: 100000,
+            radius: null,
+            custom: false,
+            // color: {
+            //     r: 255,
+            //     g: 255,
+            //     b: 255,
+            //     a: 255
+            // },
+            color: {
+                r: Math.floor(Math.random() * 200),
+                g: Math.floor(Math.random() * 200),
+                b: Math.floor(Math.random() * 200),
+                a: 255
+            },
+
+            rectWidth: 0 // for barnes-hut
+        }
+    };
+
+    // GRID GENERATING
+    const distanceBetween = 10;
     for (let i = distanceBetween; i < canvas.width - 1; i += distanceBetween) {
         for (let j = distanceBetween; j < canvas.height - 1; j += distanceBetween) {
-            spaceObjects.push({
-                prevPosition: {x: i, y: j},
-                position: {x: i, y: j},
-                moment: {x: 0, y: 0},
-                mass: Math.random() * 2000000,
-                // mass: 10000,
-                color: {g: Math.floor(Math.random() * 200), b: Math.floor(Math.random() * 200)}
-            });
+            spaceObjects.push(getNewSpaceObject(i, j));
         }
     }
+
+    // CIRCLE GENERATING
+    // const centerPoint = {x: canvas.width / 2, y: canvas.height / 2};
+    //
+    // const freq = Math.PI;
+    // const centerObject = getNewSpaceObject(centerPoint.x, centerPoint.y);
+    // centerObject.mass *= 10000;
+    //
+    // spaceObjects.push(centerObject);
+    // for (let radius = 0; radius < canvas.width / 8; radius += freq) {
+    //     for (let angle = 0; angle < Math.PI * 2; angle += freq / 50) {
+    //         const y = radius * Math.sin(angle);
+    //         const x = radius * Math.cos(angle);
+    //
+    //         const yDir = radius * Math.sin(angle + freq / 100);
+    //         const xDir = radius * Math.cos(angle + freq / 100);
+    //
+    //         spaceObjects.push(getNewSpaceObject(centerPoint.x + x, centerPoint.y + y, 10000 * (x - xDir), 10000 * (y - yDir)));
+    //     }
+    // }
+
+
+    const canvasScalingMapping = {};
+
+    const generateObjectsTree = (objects, recursionLevel, topLeftPosition) => {
+        const debugNow = Date.now();
+        recursionLevel = recursionLevel || 1;
+        topLeftPosition = topLeftPosition || {x: 0, y: 0};
+
+        if (!canvasScalingMapping[recursionLevel + '-xWidth']) {
+            canvasScalingMapping[recursionLevel + '-xWidth'] = canvas.width / Math.pow(2, recursionLevel);
+            canvasScalingMapping[recursionLevel + '-yWidth'] = canvas.height / Math.pow(2, recursionLevel);
+        }
+
+        const xWidth = canvasScalingMapping[recursionLevel + '-xWidth'];
+        const yWidth = canvasScalingMapping[recursionLevel + '-yWidth'];
+
+        const nodes = [];
+
+        for (let i = 0; i < 2; i++) {
+            for (let j = 0; j < 2; j++) {
+                // has more then one objects
+                const xFrom = topLeftPosition.x + i * xWidth;
+                const xTo = topLeftPosition.x + i * xWidth + xWidth;
+
+                const yFrom = topLeftPosition.y + j * yWidth;
+                const yTo = topLeftPosition.y + j * yWidth + yWidth;
+
+                const objectsInside = objects.filter(o => o.position.x >= xFrom && o.position.x < xTo && o.position.y >= yFrom && o.position.y < yTo);
+
+                const objectsNode = {
+                    nodes: null,
+                    centerOfMass: {x: 0, y: 0},
+                    totalMass: 0,
+                    from: {x: xFrom, y: yFrom},
+                    to: {x: xTo, y: yTo},
+                    isEmpty: false
+                    // isExternal: false,
+                    // indexOfObject: -1,
+                }
+
+                if (objectsInside.length > 1) {
+                    const localNodes = generateObjectsTree(objectsInside, recursionLevel + 1, {x: xFrom, y: yFrom});
+
+                    // calculate center of mass and total mass
+                    objectsNode.nodes = localNodes;
+
+                    objectsNode.totalMass = localNodes.reduce((acc, node) => acc + node.totalMass, 0);
+                    objectsNode.centerOfMass = getCenterOfMass(localNodes.map(lNode => ({
+                        position: lNode.centerOfMass,
+                        mass: lNode.totalMass
+                    })));
+                } else if (objectsInside.length === 1) {
+                    objectsInside[0].rectWidth = xTo - xFrom;
+                    objectsNode.centerOfMass = {x: objectsInside[0].position.x, y: objectsInside[0].position.y};
+                    objectsNode.totalMass = objectsInside[0].mass;
+                } else {
+                    objectsNode.isEmpty = true;
+                }
+                nodes.push(objectsNode);
+            }
+        }
+        if (recursionLevel === 1) {
+            console.log('generateObjectsTree: ' + (Date.now() - debugNow) + 'ms');
+        }
+
+        return nodes;
+    };
+
+    const visualizeObjectsTree = nodes => {
+        ctx.strokeStyle = 'green';
+        ctx.lineWidth = 1;
+
+        for (let i = 0; i < nodes.length; i++) {
+            ctx.strokeRect(nodes[i].from.x, nodes[i].from.y, nodes[i].to.x - nodes[i].from.x, nodes[i].to.y - nodes[i].from.y);
+
+            if (nodes[i].nodes !== null) {
+                visualizeObjectsTree(nodes[i].nodes);
+            }
+        }
+    };
+
+    const calculateRadius = () => {
+        let heaviestObjectMass = 0;
+
+        for (let i = 0; i < spaceObjects.length; i++) {
+            const mass = spaceObjects[i].mass;
+
+            if (mass > heaviestObjectMass) heaviestObjectMass = mass;
+        }
+
+        const maxRadius = 6;
+
+        for (let i = 0; i < spaceObjects.length; i++) {
+            spaceObjects[i].radius = maxRadius - maxRadius * spaceObjects[i].mass / heaviestObjectMass;
+        }
+    };
 
     const drawSpaceObjects = () => {
         const debugNow = Date.now();
         for (let i = 0; i < spaceObjects.length; i++) {
             const x = spaceObjects[i].position.x;
             const y = spaceObjects[i].position.y;
+            // const size = Math.max(1, spaceObjects[i].radius);
             const size = 3;
 
             const color = Math.min(255, Math.sqrt(spaceObjects[i].moment.x ** 2 + spaceObjects[i].moment.y ** 2) / 20 * 255);
@@ -78,26 +232,166 @@
         console.log('drawSpaceObjects: ' + (Date.now() - debugNow) + 'ms');
     };
 
-    const updateSpaceObjectsPosition = () => {
+    const putDot = (buffer, position, color, radius) => {
+        const positionY = Math.round(position.y);
+        const positionX = Math.round(position.x);
+
+        for (let i = -radius; i <= radius; i++) {
+            for (let j = -radius; j <= radius; j++) {
+                const pos = 4 * ((i + positionY) * canvas.width + (j + positionX));
+
+                buffer[pos + 0] = color.r;    // R value
+                buffer[pos + 1] = color.g;  // G value
+                buffer[pos + 2] = color.b;    // B value
+                buffer[pos + 3] = color.a;  // A value
+            }
+        }
+    };
+
+    const drawSpaceObjectsQuick = (objectsViewBuffer) => {
         const debugNow = Date.now();
-        const speed = 3 - (3 / Math.sqrt(simulationSpeed));
+        // ctx.fillStyle = 'black';
+
+        // const imageData = new ImageData(canvas.width, canvas.height);
+        // use a 32 bit view to access each pixel directly as a single value
+        // const pixels = new Uint32Array(imageData.data.buffer);
+
+        // for (let i = 0; i < pixels.length; i++) {
+        //     pixels[i] = 0xFFFFFFFF; // clean the map
+        // }
+
+        // clear map
+        for (let i = 0; i < objectsViewBuffer.length; i += 4) {
+            objectsViewBuffer[i + 0] = 255;    // R value
+            objectsViewBuffer[i + 1] = 255;  // G value
+            objectsViewBuffer[i + 2] = 255;    // B value
+            objectsViewBuffer[i + 3] = 255;  // A value
+        }
+
+        for (let i = 0; i < spaceObjects.length; i++) {
+            putDot(objectsViewBuffer, spaceObjects[i].position, spaceObjects[i].color, 1);
+        }
+
+        ctx.putImageData(new ImageData(objectsViewBuffer, canvas.width, canvas.height), 0, 0);
+
+        // for (let i = 0; i < spaceObjects.length; i++) {
+        //     ctx.fillStyle = `rgb(${spaceObjects[i].color.r}, ${spaceObjects[i].color.g}, ${spaceObjects[i].color.b})`;
+        //     ctx.fillRect(spaceObjects[i].position.x, spaceObjects[i].position.y, 3, 3);
+        // }
+        console.log('drawSpaceObjectsQuick: ' + (Date.now() - debugNow) + 'ms');
+    };
+
+    const updateSpaceObjectsPosition = (deltaFrameTime) => {
+        const debugNow = Date.now();
+        // const speed = 3 - (3 / Math.sqrt(simulationSpeed));
 
         for (let i = 0; i < spaceObjects.length; i++) {
             spaceObjects[i].prevPosition.x = spaceObjects[i].position.x;
             spaceObjects[i].prevPosition.y = spaceObjects[i].position.y;
-            spaceObjects[i].position.x += speed * spaceObjects[i].moment.x;
-            spaceObjects[i].position.y += speed * spaceObjects[i].moment.y;
+            spaceObjects[i].position.x += deltaFrameTime * spaceObjects[i].moment.x / spaceObjects[i].mass;
+            spaceObjects[i].position.y += deltaFrameTime * spaceObjects[i].moment.y / spaceObjects[i].mass;
         }
         console.log('updateSpaceObjectsPosition: ' + (Date.now() - debugNow) + 'ms');
+    };
+
+    const getCenterOfMass = (objects) => {
+        const totalMass = objects.reduce((acc, object) => acc + object.mass, 0);
+
+        return {
+            x: objects.reduce((acc, object) => acc + object.position.x * object.mass, 0) / totalMass,
+            y: objects.reduce((acc, object) => acc + object.position.y * object.mass, 0) / totalMass
+        };
+    }
+
+    const getForceBetweenObjects = (a, b) => {
+        const EPS = 3E3;      // softening parameter (just to avoid infinities)
+
+        const dy = a.position.y - b.position.y;
+        const dx = a.position.x - b.position.x;
+
+        const distance = Math.sqrt(dy * dy + dx * dx);
+
+        let acceleration = gConst * a.mass * b.mass / (distance * distance + EPS); // 1 and 2 newton's laws
+
+        // if (acceleration > 3) acceleration = 3;
+
+        // const test = Math.max(Math.abs(dy), Math.abs(dx));
+        // const x = (dx === 0 || !isFinite(dx)) ? 0 : dx / test;
+        // const y = (dy === 0 || !isFinite(dy)) ? 0 : dy / test;
+
+        return {
+            x: -acceleration * dx / distance,
+            y: -acceleration * dy / distance
+        };
+    };
+
+    const getForceBetween = (object, node) => {
+        let force = {x: 0, y: 0};
+
+        if (node.isEmpty) {
+            return force;
+        }
+
+        if (object.position.y === node.centerOfMass.y && object.position.x === node.centerOfMass.x) {
+            return force;
+        }
+
+        if (node.nodes === null) { // has a single node
+            return getForceBetweenObjects(object, {
+                position: node.centerOfMass,
+                mass: node.totalMass
+            });
+        } else {
+            const dy = object.position.y - node.centerOfMass.y;
+            const dx = object.position.x - node.centerOfMass.x;
+
+            const distance = Math.sqrt(dy * dy + dx * dx);
+
+            const isTooFar = 0.5 > object.rectWidth / distance;
+
+            if (isTooFar) {
+                return getForceBetweenObjects(object, { // code duplication
+                    position: node.centerOfMass,
+                    mass: node.totalMass
+                });
+            } else {
+                for (let i = 0; i < node.nodes.length; i++) {
+                    const {x, y} = getForceBetween(object, node.nodes[i]);
+
+                    force.x += x;
+                    force.y += y;
+                }
+            }
+        }
+
+        return force;
+    }
+
+    const updateSpaceObjectsMomentUsingBarnesHut = nodes => {
+        const debugNow = Date.now();
+        const spaceObjectsAmount = spaceObjects.length;
+
+        for (let i = 0; i < spaceObjectsAmount; i++) {
+            const resultForce = {x: 0, y: 0};
+
+            for (let j = 0; j < nodes.length; j++) {
+                const {x, y} = getForceBetween(spaceObjects[i], nodes[j]);
+                resultForce.x += x;
+                resultForce.y += y;
+            }
+
+            spaceObjects[i].moment.x += resultForce.x;
+            spaceObjects[i].moment.y += resultForce.y;
+        }
+
+        console.log('updateSpaceObjectsMomentUsingBarnesHut: ' + (Date.now() - debugNow) + 'ms');
     };
 
     const updateSpaceObjectsMoment = () => {
         const debugNow = Date.now();
         const spaceObjectsAmount = spaceObjects.length;
-        const radiusDetectionRangeRate = 0.3 + 8 - 8 / radiusDetectionRange;
+        // const radiusDetectionRangeRate = 0.3 + 8 - 8 / radiusDetectionRange;
 
-        // let isCollided = false;
-        // let collidedParams = {dx: 0, dy: 0};
         for (let i = 0; i < spaceObjectsAmount; i++) {
             const rootObject = spaceObjects[i];
 
@@ -105,66 +399,20 @@
 
             for (let j = 0; j < spaceObjectsAmount; j++) {
                 if (i === j) continue;
-                const dy = rootObject.position.y - spaceObjects[j].position.y;
-                const dx = rootObject.position.x - spaceObjects[j].position.x;
 
-                const distance = Math.sqrt(dy * dy + dx * dx);
+                const {x, y} = getForceBetweenObjects(rootObject, spaceObjects[j]);
 
-                let a, x, y;
-                if (distance <= 2) {
-
-                    break;
-                }
-                // if (distance <= radiusDetectionRangeRate) {
-                //     resultVector.x += 0;
-                //     resultVector.y += 0;
-                //     break;
-                // }
-                // spaceObjects.push({
-                //     ...rootObject,
-                //     moment: {
-                //         x: rootObject.mass > spaceObjects[j].mass ? rootObject.moment.x : spaceObjects[j].moment.x,
-                //         y: rootObject.mass > spaceObjects[j].mass ? rootObject.moment.y : spaceObjects[j].moment.y
-                //     },
-                //     mass: rootObject.mass + spaceObjects[j].mass,
-                //     color: {g: Math.floor(Math.random() * 200), b: Math.floor(Math.random() * 200)}
-                // });
-                // spaceObjects = spaceObjects.filter((_, index) => index !== i && index !== j);
-                // spaceObjects.splice(i, 1);
-                // spaceObjects.splice(j, 1);
-                //isCollided = true;
-                //break;
-                // const test = Math.max(Math.abs(dy), Math.abs(dx));
-                // x = (dx === 0 || !isFinite(dx)) ? 0 : dx / test;
-                // y = (dy === 0 || !isFinite(dy)) ? 0 : dy / test;
-                //
-                // collidedParams.dx = x;
-                // collidedParams.dy = y;
-                //break;
-                // } else {
-                a = 0.1 * spaceObjects[j].mass / (distance * distance); // 1 and 2 newton's laws
-                if (a > 100) a = 100 / 2;
-
-                const test = Math.max(Math.abs(dy), Math.abs(dx));
-                x = (dx === 0 || !isFinite(dx)) ? 0 : dx / test;
-                y = (dy === 0 || !isFinite(dy)) ? 0 : dy / test;
-                // }
-
-                resultVector.x += -a * x;
-                resultVector.y += -a * y;
+                resultVector.x += x;
+                resultVector.y += y;
             }
 
-            // if (isCollided) {
-            //     continue;
-            // } else {
             resultVector = {y: resultVector.y / spaceObjectsAmount, x: resultVector.x / spaceObjectsAmount};
 
             rootObject.moment.x += resultVector.x;
             rootObject.moment.y += resultVector.y;
 
-            rootObject.moment.x *= 0.999;
-            rootObject.moment.y *= 0.999;
-            // }
+            // rootObject.moment.x *= 0.999;
+            // rootObject.moment.y *= 0.999;
         }
 
         console.log('updateSpaceObjectsMoment: ' + (Date.now() - debugNow) + 'ms');
@@ -198,7 +446,10 @@
         ctx.fillRect(0, 0, canvas.width, canvas.height);
     };
 
+    calculateRadius();
+    const objectsViewBuffer = new Uint8ClampedArray(4 * canvas.width * canvas.height);
     setInterval(() => {
+        console.log('-----------------------------------------------------------------');
         currentFrameTime = Date.now();
         const deltaFrameTime = currentFrameTime - lastFrameTime
 
@@ -213,17 +464,33 @@
             fpsAccum++;
         }
 
-        objectsCount.innerHTML = spaceObjects.length;
-        totalMomentum.innerHTML = parseInt(spaceObjects.reduce((acc, object) => acc + Math.sqrt(object.moment.x ** 2 + object.moment.y ** 2), 0));
+        objectsCount.innerHTML = spaceObjects.length.toString();
+        // totalMomentum.innerHTML = parseInt(spaceObjects.reduce((acc, object) => acc + Math.sqrt(object.moment.x ** 2 + object.moment.y ** 2), 0)).toString();
         clearObjects();
-        drawMap();
-        updateSpaceObjectsMoment();
-        updateSpaceObjectsPosition();
-        drawSpaceObjects();
+        // drawMap();
+        // updateSpaceObjectsMoment();
+        const nodes = generateObjectsTree(spaceObjects)
+        updateSpaceObjectsMomentUsingBarnesHut(nodes);
+        visualizeObjectsTree(nodes);
+        updateSpaceObjectsPosition(deltaFrameTime);
+        // drawSpaceObjects();
+
+        drawSpaceObjectsQuick(objectsViewBuffer);
+
+        // const nodes = generateObjectsTree(spaceObjects);
+
+
+        console.log('-----------------------------------------------------------------');
     }, 0);
 
     radiusDetectionRangeElement.addEventListener('input', e => {
-        radiusDetectionRange = Number(e.target.value);
+        const value = Number(e.target.value);
+
+        for (let i = 0; i < spaceObjects.length; i++) {
+            if (!spaceObjects[i].custom) {
+                spaceObjects[i].mass = value;
+            }
+        }
     });
 
     simulationSpeedElement.addEventListener('input', e => {
@@ -244,9 +511,15 @@
             prevPosition: {x: x, y: y},
             position: {x: x, y: y},
             moment: {x: 0, y: 0},
-            mass: Math.random() * 2000000,
-            // mass: 1000000000000,
-            color: {g: Math.floor(Math.random() * 200), b: Math.floor(Math.random() * 200)}
+            // mass: Math.random() * 2000000,
+            mass: 10000000000000,
+            custom: true,
+            color: {
+                r: Math.floor(Math.random() * 200),
+                g: Math.floor(Math.random() * 200),
+                b: Math.floor(Math.random() * 200),
+                a: 255
+            }
         });
         e.clientX
         e.clientY
